@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ARGUS — System Governance Console</title>
+<style>
+  :root {
+    --bg: #0a0c0a;
+    --bg-panel: #0e110e;
+    --bg-titlebar: #181b18;
+    --bg-statusline: #12140f;
+    --border: #2b332d;
+    --border-soft: #1c221d;
+    --text: #d6e8d6;
+    --text-dim: #7fa085;
+    --text-faint: #47564b;
+    --accent: #4ade80;
+    --accent-dim: #2c6b45;
+    --safe: #4ade80;
+    --reversible: #e8c072;
+    --destructive: #ff6a5f;
+    --dot-red: #ff5f56;
+    --dot-yellow: #e8c072;
+    --dot-green: #4ade80;
+    --font-mono: "Cascadia Code", "Fira Code", "JetBrains Mono", Consolas, "DejaVu Sans Mono", ui-monospace, monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: #000;
+    color: var(--text);
+    font-family: var(--font-mono);
+    overflow: hidden;
+  }
+
+  /* ---------- Boot sequence ---------- */
+  #boot {
+    position: fixed; inset: 0; background: var(--bg);
+    z-index: 100; display: flex; align-items: center; justify-content: center;
+    flex-direction: column;
+  }
+  #boot .logo {
+    font-size: 13px; line-height: 1.15;
+    color: var(--accent); white-space: pre; margin-bottom: 26px;
+    text-shadow: 0 0 14px rgba(74,222,128,0.3);
+    opacity: 0; animation: fadeIn 0.6s ease forwards;
+  }
+  #boot .lines { font-size: 13px; color: var(--text-dim); min-height: 170px; width: 460px; }
+  #boot .lines div { opacity: 0; animation: lineIn 0.35s ease forwards; margin-bottom: 7px; }
+  #boot .tag-ok { color: var(--safe); }
+  #boot .tag-warn { color: var(--reversible); }
+  @keyframes fadeIn { to { opacity: 1; } }
+  @keyframes lineIn { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: translateY(0); } }
+  #boot.hide { animation: bootOut 0.4s ease forwards; }
+  @keyframes bootOut { to { opacity: 0; visibility: hidden; } }
+
+  /* ---------- Terminal window ---------- */
+  #app { display: none; height: 100vh; align-items: center; justify-content: center; padding: 18px; }
+  #app.show { display: flex; }
+
+  .term-window {
+    width: 100%; height: 100%; max-width: 1400px;
+    display: flex; flex-direction: column;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 30px 80px rgba(0,0,0,0.6);
+  }
+
+  .term-titlebar {
+    display: flex; align-items: center; padding: 10px 14px;
+    background: var(--bg-titlebar); border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .term-dots { display: flex; gap: 8px; width: 120px; }
+  .term-dots span { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+  .term-dots .red { background: var(--dot-red); }
+  .term-dots .yellow { background: var(--dot-yellow); }
+  .term-dots .green { background: var(--dot-green); }
+  .term-title { flex: 1; text-align: center; font-size: 12.5px; color: var(--text-dim); }
+  .term-title b { color: var(--text); font-weight: 600; }
+  .term-titlebar-spacer { width: 120px; }
+
+  .term-statusline {
+    display: flex; align-items: center; gap: 0; flex-shrink: 0;
+    background: var(--bg-statusline); border-bottom: 1px solid var(--border-soft);
+    font-size: 12px;
+  }
+  .status-seg { padding: 6px 14px; border-right: 1px solid var(--border-soft); }
+  .status-seg.mode { color: var(--bg); background: var(--accent); font-weight: 700; cursor: pointer; user-select: none; }
+  .status-seg.mode.live { background: var(--destructive); }
+  .status-seg.backend { color: var(--text-dim); display: flex; align-items: center; gap: 6px; }
+  .status-seg.hint { color: var(--text-faint); margin-left: auto; border-right: none; }
+  .sdot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-faint); display: inline-block; }
+  .sdot.on { background: var(--safe); box-shadow: 0 0 5px var(--safe); }
+  .sdot.off { background: var(--reversible); box-shadow: 0 0 5px var(--reversible); }
+
+  .term-body { flex: 1; display: flex; min-height: 0; }
+  .term-main { flex: 1; display: flex; flex-direction: column; min-width: 0; border-right: 1px solid var(--border-soft); }
+
+  #stream { flex: 1; overflow-y: auto; padding: 16px 20px; font-size: 13.5px; line-height: 1.5; }
+
+  .line-user { margin-bottom: 4px; }
+  .line-user .prompt { color: var(--accent); }
+  .line-user .typed { color: var(--text); }
+
+  .resp-block { margin: 4px 0 20px 0; padding-left: 14px; border-left: 2px solid var(--text-faint); }
+  .resp-block.tier-SAFE { border-left-color: var(--safe); }
+  .resp-block.tier-REVERSIBLE { border-left-color: var(--reversible); }
+  .resp-block.tier-DESTRUCTIVE { border-left-color: var(--destructive); }
+
+  .resp-explain { color: var(--text-dim); margin-bottom: 8px; }
+  .resp-row { display: flex; gap: 8px; margin-bottom: 3px; }
+  .resp-row .k { color: var(--text-faint); width: 78px; flex-shrink: 0; }
+  .resp-row .v { color: var(--text); word-break: break-all; }
+  .resp-row .v.cmd { color: var(--accent); }
+  .tag { font-weight: 700; padding: 0 3px; }
+  .tag.tier-SAFE { color: var(--safe); }
+  .tag.tier-REVERSIBLE { color: var(--reversible); }
+  .tag.tier-DESTRUCTIVE { color: var(--destructive); }
+  .reason-txt { color: var(--text-faint); }
+
+  .copy-inline { background: none; border: none; color: var(--text-faint); font-family: var(--font-mono); font-size: 11px; cursor: pointer; text-decoration: underline; padding: 0; margin-left: 6px; }
+  .copy-inline:hover { color: var(--text-dim); }
+
+  .confirm-line { margin-top: 8px; color: var(--reversible); }
+  .confirm-line .btn-y { color: var(--destructive); font-weight: 700; cursor: pointer; text-decoration: underline; }
+  .confirm-line .btn-n { color: var(--text-dim); font-weight: 700; cursor: pointer; text-decoration: underline; }
+  .resolved-line { margin-top: 8px; }
+  .resolved-line.confirmed { color: var(--destructive); }
+  .resolved-line.cancelled { color: var(--text-faint); }
+  .exec-line { margin-top: 6px; color: var(--text-faint); }
+  .rollback-line { margin-top: 4px; color: var(--text-faint); }
+  .rollback-line b { color: var(--text-dim); }
+
+  .term-inputline {
+    display: flex; align-items: center; gap: 8px;
+    padding: 12px 20px; border-top: 1px solid var(--border-soft);
+    background: var(--bg-panel); flex-shrink: 0;
+  }
+  .term-inputline .prompt { color: var(--accent); font-size: 13.5px; white-space: nowrap; }
+  #reqInput {
+    flex: 1; background: transparent; border: none; color: var(--text);
+    font-family: var(--font-mono); font-size: 13.5px; outline: none; caret-color: var(--accent);
+  }
+  #reqInput::placeholder { color: var(--text-faint); }
+
+  /* ---------- Sidebar / audit log panel ---------- */
+  .term-sidebar { width: 320px; display: flex; flex-direction: column; background: var(--bg-panel); flex-shrink: 0; }
+  .panel-title { padding: 10px 16px; font-size: 12px; color: var(--text-dim); border-bottom: 1px solid var(--border-soft); letter-spacing: 0.5px; }
+  .panel-stats { display: flex; gap: 14px; padding: 10px 16px; border-bottom: 1px solid var(--border-soft); font-size: 12px; }
+  .pstat { color: var(--text-faint); }
+  .pstat b { font-size: 13px; margin-left: 3px; }
+  .pstat.safe b { color: var(--safe); }
+  .pstat.rev b { color: var(--reversible); }
+  .pstat.des b { color: var(--destructive); }
+
+  #logList { flex: 1; overflow-y: auto; padding: 10px 16px; font-size: 11.5px; }
+  .log-entry { border-left: 2px solid var(--text-faint); padding: 5px 0 5px 9px; margin-bottom: 7px; }
+  .log-entry.tier-SAFE { border-left-color: var(--safe); }
+  .log-entry.tier-REVERSIBLE { border-left-color: var(--reversible); }
+  .log-entry.tier-DESTRUCTIVE { border-left-color: var(--destructive); }
+  .log-entry .lt { color: var(--text-faint); font-size: 10px; }
+  .log-entry .lc { color: var(--text-dim); margin-top: 2px; word-break: break-all; }
+  .log-entry .lr { color: var(--text-faint); margin-top: 2px; }
+  .empty-log { color: var(--text-faint); font-size: 12px; padding: 20px 0; text-align: center; }
+
+  ::-webkit-scrollbar { width: 8px; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 0; }
+  ::-webkit-scrollbar-track { background: transparent; }
+</style>
+</head>
+<body>
+
+  <div id="boot">
+    <div class="logo">   _   ____   ____ _   _ ____
+  / \ |  _ \ / ___| | | / ___|
+ / _ \| |_) | |  _| | | \___ \
+/ ___ \  _ &lt;| |_| | |_| |___) |
+/_/   \_\_\_\\____|\___/|____/</div>
+    <div class="lines" id="bootLines"></div>
+  </div>
+
+  <div id="app">
+    <div class="term-window">
+      <div class="term-titlebar">
+        <div class="term-dots"><span class="red"></span><span class="yellow"></span><span class="green"></span></div>
+        <div class="term-title"><b>aditya@argus-os</b>: ~/argus_demo1</div>
+        <div class="term-titlebar-spacer"></div>
+      </div>
+
+      <div class="term-statusline">
+        <span class="status-seg mode" id="modeSeg">DRY-RUN</span>
+        <span class="status-seg backend"><span class="sdot" id="statusDot"></span><span id="statusText">connecting…</span></span>
+        <span class="status-seg hint">click mode to toggle dry-run / live</span>
+      </div>
+
+      <div class="term-body">
+        <div class="term-main">
+          <div id="stream"></div>
+          <div class="term-inputline">
+            <span class="prompt">aditya@argus-os:~$</span>
+            <input id="reqInput" type="text" placeholder="type a request in plain English… e.g. 'delete the temp folder'" autocomplete="off" />
+          </div>
+        </div>
+
+        <div class="term-sidebar">
+          <div class="panel-title">AUDIT LOG</div>
+          <div class="panel-stats">
+            <span class="pstat safe">SAFE<b id="statSafe">0</b></span>
+            <span class="pstat rev">REV<b id="statRev">0</b></span>
+            <span class="pstat des">DES<b id="statDes">0</b></span>
+          </div>
+          <div id="logList"><div class="empty-log">no actions logged yet this session</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+const bootLines = [
+  ["tag-ok", "[  OK  ]", "Loading governance layer v1"],
+  ["tag-ok", "[  OK  ]", "Initializing risk-classification rule table"],
+  ["tag-ok", "[  OK  ]", "Mounting audit log"],
+  ["tag-warn", "[ .... ]", "Connecting to local model backend"],
+];
+
+async function runBoot() {
+  const el = document.getElementById("bootLines");
+  for (let i = 0; i < bootLines.length; i++) {
+    const [cls, tag, text] = bootLines[i];
+    const d = document.createElement("div");
+    d.innerHTML = `<span class="${cls}">${tag}</span>  ${text}`;
+    el.appendChild(d);
+    await sleep(240);
+  }
+  let status = { backend: "unknown", ollama_available: false };
+  try {
+    const r = await fetch("/status");
+    status = await r.json();
+  } catch (e) {}
+  const last = el.lastElementChild;
+  if (status.ollama_available) {
+    last.innerHTML = `<span class="tag-ok">[  OK  ]</span>  Model backend online — ${status.backend}`;
+  } else {
+    last.innerHTML = `<span class="tag-warn">[ WARN ]</span>  Ollama unreachable — falling back to offline mode`;
+  }
+  await sleep(300);
+  const ready = document.createElement("div");
+  ready.innerHTML = `<span class="tag-ok">ARGUS ready.</span>`;
+  el.appendChild(ready);
+  await sleep(420);
+
+  document.getElementById("boot").classList.add("hide");
+  document.getElementById("app").classList.add("show");
+  applyStatus(status);
+  refreshLog();
+  document.getElementById("reqInput").focus();
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+function applyStatus(status) {
+  const dot = document.getElementById("statusDot");
+  const text = document.getElementById("statusText");
+  if (status.ollama_available) {
+    dot.className = "sdot on";
+    text.textContent = status.backend;
+  } else {
+    dot.className = "sdot off";
+    text.textContent = "mock mode (offline)";
+  }
+}
+
+let dryRun = true;
+document.getElementById("modeSeg").addEventListener("click", () => {
+  dryRun = !dryRun;
+  const seg = document.getElementById("modeSeg");
+  seg.textContent = dryRun ? "DRY-RUN" : "LIVE";
+  seg.classList.toggle("live", !dryRun);
+});
+
+const stream = document.getElementById("stream");
+
+function addUserMsg(text) {
+  const div = document.createElement("div");
+  div.className = "line-user";
+  div.innerHTML = `<span class="prompt">aditya@argus-os:~$</span> <span class="typed"></span>`;
+  div.querySelector(".typed").textContent = text;
+  stream.appendChild(div);
+  stream.scrollTop = stream.scrollHeight;
+}
+
+function addAgentCard(proposal) {
+  const wrap = document.createElement("div");
+  const tier = proposal.risk_tier;
+  wrap.className = `resp-block tier-${tier}`;
+  wrap.innerHTML = `
+    <div class="resp-explain"></div>
+    <div class="resp-row"><span class="k">command:</span><span class="v cmd"></span><button class="copy-inline">copy</button></div>
+    <div class="resp-row"><span class="k">risk:</span><span class="v"><span class="tag tier-${tier}">[${tier}]</span> <span class="reason-txt"></span></span></div>
+    <div class="rollback-slot"></div>
+    <div class="confirm-slot"></div>
+    <div class="exec-slot"></div>
+  `;
+  wrap.querySelector(".resp-explain").textContent = proposal.explanation || "(no explanation returned)";
+  wrap.querySelector(".v.cmd").textContent = proposal.command || "(no command generated)";
+  wrap.querySelector(".reason-txt").textContent = proposal.reason;
+  wrap.querySelector(".copy-inline").addEventListener("click", () => {
+    navigator.clipboard.writeText(proposal.command || "");
+  });
+
+  if (proposal.rollback_hint) {
+    wrap.querySelector(".rollback-slot").innerHTML =
+      `<div class="rollback-line"><b>rollback:</b> ${proposal.rollback_hint}</div>`;
+  }
+
+  stream.appendChild(wrap);
+  stream.scrollTop = stream.scrollHeight;
+
+  if (proposal.requires_confirmation) {
+    const cs = wrap.querySelector(".confirm-slot");
+    cs.innerHTML = `<div class="confirm-line">Proceed with this destructive action? [<span class="btn-y">Y</span>/<span class="btn-n">N</span>]</div>`;
+    cs.querySelector(".btn-y").addEventListener("click", () => resolveAction(true, proposal, wrap, cs));
+    cs.querySelector(".btn-n").addEventListener("click", () => resolveAction(false, proposal, wrap, cs));
+  } else {
+    executeProposal(proposal, true, wrap);
+  }
+}
+
+async function resolveAction(confirmed, proposal, wrap, cs) {
+  cs.innerHTML = `<div class="resolved-line ${confirmed ? 'confirmed' : 'cancelled'}">${confirmed ? '> confirmed by user' : '> cancelled by user'}</div>`;
+  await executeProposal(proposal, confirmed, wrap);
+}
+
+async function executeProposal(proposal, confirmed, wrap) {
+  try {
+    const r = await fetch("/execute", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        nl_request: proposal.nl_request,
+        command: proposal.command,
+        risk_tier: proposal.risk_tier,
+        reason: proposal.reason,
+        rollback_hint: proposal.rollback_hint,
+        confirmed: confirmed,
+        dry_run: dryRun,
+      }),
+    });
+    const entry = await r.json();
+    const es = wrap.querySelector(".exec-slot");
+    es.innerHTML = `<div class="exec-line"></div>`;
+    es.querySelector(".exec-line").textContent = "→ " + entry.execution_result;
+  } catch (e) {
+    console.error(e);
+  }
+  refreshLog();
+}
+
+async function sendRequest() {
+  const input = document.getElementById("reqInput");
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = "";
+  input.disabled = true;
+  addUserMsg(text);
+  try {
+    const r = await fetch("/command", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ request: text }),
+    });
+    const proposal = await r.json();
+    addAgentCard(proposal);
+  } catch (e) {
+    const div = document.createElement("div");
+    div.className = "resp-block tier-DESTRUCTIVE";
+    div.innerHTML = `<div class="resp-explain">Could not reach the ARGUS backend. Is the server still running?</div>`;
+    stream.appendChild(div);
+  }
+  input.disabled = false;
+  input.focus();
+}
+
+document.getElementById("reqInput").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") sendRequest();
+});
+
+async function refreshLog() {
+  try {
+    const r = await fetch("/log");
+    const entries = await r.json();
+    const list = document.getElementById("logList");
+    if (!entries.length) {
+      list.innerHTML = `<div class="empty-log">no actions logged yet this session</div>`;
+    } else {
+      list.innerHTML = entries.slice().reverse().map(e => `
+        <div class="log-entry tier-${e.risk_tier}">
+          <div class="lt">${e.timestamp} · ${e.risk_tier}</div>
+          <div class="lc">${escapeHtml(e.command || "(none)")}</div>
+          <div class="lr">${e.executed ? "executed" : (e.user_confirmed ? "dry-run" : "blocked / cancelled")}</div>
+        </div>`).join("");
+    }
+    let safe = 0, rev = 0, des = 0;
+    entries.forEach(e => {
+      if (e.risk_tier === "SAFE") safe++;
+      else if (e.risk_tier === "REVERSIBLE") rev++;
+      else if (e.risk_tier === "DESTRUCTIVE") des++;
+    });
+    document.getElementById("statSafe").textContent = safe;
+    document.getElementById("statRev").textContent = rev;
+    document.getElementById("statDes").textContent = des;
+  } catch (e) {}
+}
+
+function escapeHtml(s) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+runBoot();
+</script>
+</body>
+</html>
